@@ -107,6 +107,11 @@ source currDisputeEthBalance: integer = Call {
     params: tuple(disputeGame)
 };
 
+// For all the resolveClaim call(s) past and present, the total ETH that is set to be withdrawn is the
+// sum of all the unlock calls (inclusive of the current block)
+source currentEthUnlocked: integer = Sum { sequence: unlockAmounts };
+
+
 // Compute total expected ETH unlocks based on past claim resolutions
 // Ensures the monitor tracks pending ETH claims that haven't been withdrawn yet
 source futureEthUnlocked: integer = Len { sequence: resolveClaimCalls } == 0
@@ -122,5 +127,5 @@ source totalDisputeEthBalance: integer = currDisputeEthBalance + Sum { sequence:
 // balance, the final value should ALWAYS be equal to 0
 invariant {
     description: "Dispute Game ETH imbalance detected between total balance, unlocks, and withdrawals",
-    condition: (Len { sequence: addressesInTrace } > 0) ? ((totalDisputeEthBalance - (futureEthUnlocked + Sum { sequence: unlockAmounts })) == 0) : true
+    condition: (Len { sequence: addressesInTrace } > 0) ? ((totalDisputeEthBalance - (futureEthUnlocked + currentEthUnlocked)) == 0) : true
 };
