@@ -1,6 +1,6 @@
-use Call, Calls, HistoricalCalls, HistoricalEvents, Len, Min, Range, Sum, FilterAddressesInTrace from hexagate;
+use Call, Calls, HistoricalCalls, HistoricalEvents, Events, Len, Min, Range, Sum, FilterAddressesInTrace, BlockNumber from hexagate;
 
-param disputeGame: address;
+param disputeGame: address; 
 
 // Filter to only run this invariant if the disputeGame address is in the trace
 source addressesInTrace: list<address> = FilterAddressesInTrace {
@@ -13,8 +13,8 @@ source delayedWETH: address = Call {
     signature: "function weth() returns (address)"
 };
 
-// Retrieve all resolveClaim calls - note HistoricalCalls is inclusive of the current block and also caches
-// prior call invocations - meaning the prior tuples will NOT show up in subsequent invocations of this invariant
+// Retrieve all past resolveClaim calls, tracking claim indices and resolutions
+// This helps determine which claims have been resolved and which are pending
 source resolveClaimCalls: list<tuple<integer,integer>> = HistoricalCalls {
     contract: disputeGame,
     signature: "function resolveClaim(uint256 _claimIndex, uint256 _numToResolve)"
@@ -22,8 +22,7 @@ source resolveClaimCalls: list<tuple<integer,integer>> = HistoricalCalls {
 
 // Parse out just the claim indices from the historical resolveClaim calls
 source claimIndices: list<integer> = [
-    claim[0]
-    for claim in resolveClaimCalls
+    claim[0] for claim in resolveClaimCalls
 ];
 
 // Similar to the resolveClaim calls, retrieve all unlock calls on the delayedWETH contract
@@ -35,8 +34,7 @@ source unlocksWithSender: list<tuple<address,tuple<address,integer>>> = Historic
 
 // Filter out only the unlock calls that originated from the currrent disputeGame contract
 source unlockAmounts: list<integer> = [
-    unlock[1][1]
-    for unlock in unlocksWithSender if (unlock[0] == disputeGame)
+    unlock[1][1] for unlock in unlocksWithSender if (unlock[0] == disputeGame)
 ];
 
 // For all the resolve claim call(s), determine the smallest (aka topmost) value
@@ -47,9 +45,9 @@ source minClaimIndex: integer = Len { sequence: resolveClaimCalls } == 0 ? 0 : M
 // With the minClaimIndex (exclusive), generate the remaining range of indices left that need to be resolved
 source indicesRange: list<integer> = Range { start: 0, stop: minClaimIndex};
 
-// With indicesRange, calculate the expected bond values per claim index
+// Compute expected bond values per claim index
 // We DO NOT count subgames because every claim has its own claim index, even if it is a subgame of another claim,
-//   meaning it will already be accounted for in indicesRange
+// meaning it will already be accounted for in indicesRange
 source ethBondsPerClaimIndex: list<integer> = [
     Call {
         contract: disputeGame,
@@ -59,51 +57,69 @@ source ethBondsPerClaimIndex: list<integer> = [
     for index in indicesRange
 ];
 
-// For the minClaimIndex, if there are still subgames left to resolve then we include the claim in the future eth bonds
-// Otherwise, the minClaimIndex will be part of the past eth bonds claimed
-// We assume that the subgames involved in a given claim index have already been resolved at this point for simplicity
-source ethBondAtMinClaim: integer = Call { contract: disputeGame, signature: "function getNumToResolve(uint256) returns (uint256)", params: tuple(minClaimIndex)} == 0
-    ? 0
-    : Call { contract: disputeGame, signature: "function getRequiredBond(uint128) returns (uint256)", params: tuple(2 ** minClaimIndex)};
+// Compute bond requirement at minClaimIndex (if applicable)
+// If there are still subgames left to resolve, include the claim in the future eth bonds,
+// otherwise, the minClaimIndex will be part of the past eth bonds claimed
+source ethBondAtMinClaim: integer = Call { 
+    contract: disputeGame, 
+    signature: "function getNumToResolve(uint256) returns (uint256)", 
+    params: tuple(minClaimIndex)
+} == 0 ? 0 : Call { 
+    contract: disputeGame, 
+    signature: "function getRequiredBond(uint128) returns (uint256)", 
+    params: tuple(2 ** minClaimIndex)
+};
 
-// For all the resolveClaim call(s) past and present, the total ETH that is set to be withdrawn is the
-// sum of all the unlock calls (inclusive of the current block)
-source currentEthUnlocked: integer = Sum { sequence: unlockAmounts };
+// Track withdrawals occurring in the current block
+// These are real-time events and must be accounted for separately
+source currentWithdrawal: list<tuple<integer>> = Events {
+    contract: disputeGame,
+    signature: "event ReceiveETH(uint256 amount)"
+};
 
-// Get the current ETH balance of the dispute game in the DelayedWETH contract
+// Retrieve past withdrawal events, including block numbers
+// Used to track ETH withdrawals over historical blocks
+source pastWithdrawalEvents: list<tuple<integer, tuple<integer>>> = HistoricalEvents {
+    contract: disputeGame,
+    signature: "event ReceiveETH(uint256 amount)",
+    withBlocks: true
+};
+
+// Extract past withdrawal amounts, excluding the current block
+source pastWithdrawals: list<integer> = [
+    withdrawal[1][0]  // Extract withdrawal amount from nested tuple
+    for withdrawal in pastWithdrawalEvents
+    if withdrawal[0] < BlockNumber {}  // Ensure only withdrawals from previous blocks are counted
+];
+
+// Extract amounts from current block withdrawal events
+// Since past withdrawals don't account for real-time activity, this ensures accurate balance calculation
+source currentWithdrawals: list<integer> = [
+    withdrawal[0] for withdrawal in currentWithdrawal
+];
+
+// Retrieve the current ETH balance of the dispute game in the DelayedWETH contract
+// This is the real-time ETH balance available in the contract
 source currDisputeEthBalance: integer = Call {
     contract: delayedWETH,
     signature: "function balanceOf(address) returns (uint256)",
     params: tuple(disputeGame)
 };
 
-// For the claim indices and subgames that still need to be resolved, sum the cumulative expected bond value
-// If NO claims have been resolved yet, simply set the value of futureEthUnlocked to currDisputeEthBalance
+// Compute total expected ETH unlocks based on past claim resolutions
+// Ensures the monitor tracks pending ETH claims that haven't been withdrawn yet
 source futureEthUnlocked: integer = Len { sequence: resolveClaimCalls } == 0
     ? currDisputeEthBalance
     : Sum { sequence: ethBondsPerClaimIndex } + ethBondAtMinClaim;
 
-// Check to see if any withdrawals have occurred on the DelayedWETH contract that originated from the dispute game
-source pastWithdrawalEvents: list<tuple<integer>> = HistoricalEvents {
-    contract: disputeGame,
-    signature: "event ReceiveETH(uint256 amount)"
-};
-
-// The event returns a tuple so splice out each 'tuple' into a list so we can sum the values
-source pastWithdrawals: list<integer> = [
-    withdrawal[0]
-    for withdrawal in pastWithdrawalEvents
-];
-
-// Sum the amounts, and add that to currDisputeEthBalance
-// This handles the scenaio where prior subgame resolutions have already been claimed - now we can assume
-//    that balanceOf() == max amount of ETH bonded
-source totalDisputeEthBalance: integer = currDisputeEthBalance + Sum { sequence: pastWithdrawals };
+// Compute total ETH balance, including past and current withdrawals
+// This accounts for both previous and real-time withdrawals from the dispute game
+source totalDisputeEthBalance: integer = currDisputeEthBalance + Sum { sequence: pastWithdrawals } + Sum { sequence: currentWithdrawals };
 
 // There are 2 totals: past and current ETH unlocked, and future ETH unlocked
 // When the 2 totals are summed and subtracted from the balance of the dispute game contract's DelayedWETH
-//   balance, the final value should ALWAYS be equal to 0
+// balance, the final value should ALWAYS be equal to 0
 invariant {
     description: "Dispute Game ETH imbalance detected between total balance, unlocks, and withdrawals",
-    condition: (Len { sequence: addressesInTrace } > 0) ? ((totalDisputeEthBalance - (futureEthUnlocked + currentEthUnlocked)) == 0) : true
+    condition: (Len { sequence: addressesInTrace } > 0) ? ((totalDisputeEthBalance - (futureEthUnlocked + Sum { sequence: unlockAmounts })) == 0) : true
 };
