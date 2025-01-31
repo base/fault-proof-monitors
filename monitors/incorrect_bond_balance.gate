@@ -60,6 +60,7 @@ source ethBondsPerClaimIndex: list<integer> = [
 // Compute bond requirement at minClaimIndex (if applicable)
 // If there are still subgames left to resolve, include the claim in the future eth bonds,
 // otherwise, the minClaimIndex will be part of the past eth bonds claimed
+// Caveat: We assume that the subgames involved in a given claim index have already been resolved at this point for simplicity
 source ethBondAtMinClaim: integer = Call { 
     contract: disputeGame, 
     signature: "function getNumToResolve(uint256) returns (uint256)", 
