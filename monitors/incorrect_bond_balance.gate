@@ -73,7 +73,7 @@ source ethBondAtMinClaim: integer = Call {
 
 // Track withdrawals occurring in the current block
 // These are real-time events and must be accounted for separately
-source currentWithdrawal: list<tuple<integer>> = Events {
+source currentWithdrawalEvents: list<tuple<integer>> = Events {
     contract: disputeGame,
     signature: "event ReceiveETH(uint256 amount)"
 };
