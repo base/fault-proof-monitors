@@ -96,7 +96,7 @@ source pastWithdrawals: list<integer> = [
 // Extract amounts from current block withdrawal events
 // Since past withdrawals don't account for real-time activity, this ensures accurate balance calculation
 source currentWithdrawals: list<integer> = [
-    withdrawal[0] for withdrawal in currentWithdrawal
+    withdrawal[0] for withdrawal in currentWithdrawalEvents
 ];
 
 // Retrieve the current ETH balance of the dispute game in the DelayedWETH contract
