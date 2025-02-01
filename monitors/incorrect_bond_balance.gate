@@ -1,6 +1,8 @@
 use Call, Calls, HistoricalCalls, HistoricalEvents, Events, Len, Min, Range, Sum, FilterAddressesInTrace, BlockNumber from hexagate;
 
-param disputeGame: address; 
+param disputeGame: address;
+
+source currBlockNumber: integer = BlockNumber {};
 
 // Filter to only run this invariant if the disputeGame address is in the trace
 source addressesInTrace: list<address> = FilterAddressesInTrace {
@@ -90,7 +92,7 @@ source pastWithdrawalEvents: list<tuple<integer, tuple<integer>>> = HistoricalEv
 source pastWithdrawals: list<integer> = [
     withdrawal[1][0]  // Extract withdrawal amount from nested tuple
     for withdrawal in pastWithdrawalEvents
-    if withdrawal[0] < BlockNumber {}  // Ensure only withdrawals from previous blocks are counted
+    if withdrawal[0] < currBlockNumber  // Ensure only withdrawals from previous blocks are counted
 ];
 
 // Extract amounts from current block withdrawal events

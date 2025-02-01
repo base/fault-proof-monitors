@@ -203,10 +203,77 @@ func TestIncorrectBondBalanceCorrectETHValues(t *testing.T) {
 		"ethBondAtMinClaim":     0,               // the min claim index, which is 2, is fully resolved
 		"ethBondsPerClaimIndex": []int{200, 100}, // the eth bonds for the remaining claim indices are 200 and 100, respectively
 		"currDisputeEthBalance": 800,
+		"currBlockNumber":       1,
 		"pastWithdrawalEvents": [][]interface{}{
 			// two withdrawal events have already happened, which when added to the current dispute
 			// eth balance gives the correct amount
-			{100},
+			{0, []interface{}{100}},
+			{0, []interface{}{100}},
+		},
+	}
+
+	// call out to hexagate API to run the gate file with params and mocks
+	failed, exceptions, trace, err := HandleValidateRequest(data, params, mocks)
+	if err != nil {
+		t.Errorf("Error handling validate request for %s: %v", monitorEighteenFile, err)
+	}
+
+	// check if the validate request threw any exceptions
+	if len(exceptions) > 0 {
+		fmt.Println(trace)
+		t.Errorf("Exceptions for %s: %v", monitorEighteenFile, exceptions)
+	}
+
+	// we DO NOT expect to see the alert fired
+	if len(failed) > 0 {
+		fmt.Println(trace)
+		t.Errorf("Monitor fired an alert for %s when it was not supposed to", monitorEighteenFile)
+
+	}
+}
+
+func TestIncorrectBondBalanceCorrectPastAndCurrentETHValues(t *testing.T) {
+	// We DO NOT expect an alert to be fired when the FutureETHUnlocked and CurrentETHUnlocked are the expected values
+	// where the CurrentETHUnlocked is aggregated from past and current withdrawals
+
+	// set the params
+	params := map[string]any{
+		"disputeGame": "0x00000000000000000000000000000000000000AA",
+	}
+
+	// read in the gate file
+	data, err := ReadGateFile(monitorEighteenFile)
+	if err != nil {
+		t.Errorf("Error reading file %s: %v", monitorEighteenFile, err)
+	}
+
+	// setup the mocks
+	mocks := map[string]any{
+		"addressesInTrace": []any{"0x00000000000000000000000000000000000000AA"},
+		"delayedWETH":      "0x00000000000000000000000000000000000000BB",
+		"resolveClaimCalls": [][]interface{}{
+			{3, 512},
+			{2, 512},
+			// claim indices 1 and 0 have not been resolved yet
+		},
+		"unlocksWithSender": [][]interface{}{
+			// two unlocks for two resolveClaim calls
+			{"0x00000000000000000000000000000000000000AA", []interface{}{"0x0000000000000000000000000000000000000001", 400}},
+			{"0x00000000000000000000000000000000000000AA", []interface{}{"0x0000000000000000000000000000000000000002", 300}},
+			// this unlock is for a different dispute game so it should not be counted
+			{"0x00000000000000000000000000000000000000BB", []interface{}{"0x0000000000000000000000000000000000000002", 300}},
+		},
+		"ethBondAtMinClaim":     0,               // the min claim index, which is 2, is fully resolved
+		"ethBondsPerClaimIndex": []int{200, 100}, // the eth bonds for the remaining claim indices are 200 and 100, respectively
+		"currDisputeEthBalance": 800,
+		"currBlockNumber":       1,
+		"pastWithdrawalEvents": [][]interface{}{
+			// one withdrawal event has already happened, the other one happened in the latest block but will be accounted
+			// for in the currentWithdrawalEvents (so no double count)
+			{0, []interface{}{100}},
+			{1, []interface{}{100}},
+		},
+		"currentWithdrawalEvents": [][]interface{}{
 			{100},
 		},
 	}
