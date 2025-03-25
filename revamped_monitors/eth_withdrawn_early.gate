@@ -1,0 +1,137 @@
+use Call, Calls, Contains, HistoricalCalls, MapContains, Max, Sum, Unique, Len, Range from hexagate;
+
+param multicall3: address; // Multicall3 contract to retrieve block timestamps
+param disputeGameVerifier: address; // Verifier contract to validate dispute games
+param baseDisputeGameFactory: address; // Base dispute game factory
+
+// Get all claimCredit(address) calls in this block
+source allClaims: list<tuple<address, tuple<address>>> = Calls {
+  signature: "function claimCredit(address _recipient)",
+  withContract: true
+};
+
+// Filter to verified dispute games from allCalls
+source verifiedClaims: list<tuple<address, tuple<address>>> = [
+  call
+  for call in allClaims
+  if Call {
+    contract: disputeGameVerifier,
+    signature: "function isGameRegistered(address,address) view returns (bool)",
+    params: tuple(baseDisputeGameFactory, call[0])
+  } == true
+];
+
+// Determine whether there are verified claims in this block
+source hasVerified: boolean = Len { sequence: verifiedClaims } > 0;
+
+// Use the first verified dispute game to evaluate the rest of the logic
+source disputeGame: address = hasVerified ? verifiedClaims[0][0] : 0x0000000000000000000000000000000000000000;
+
+// Get the address of the DelayedWETH contract
+source delayedWETH: address = Call {
+  contract: disputeGame,
+  signature: "function weth() returns (address)"
+};
+
+// Extract just the recipient addresses from the claimCredit calls
+source claimRecipients: list<address> = [ call[1][0] for call in verifiedClaims ];
+
+// Withdraw calls from DelayedWETH
+source withdrawals: list<tuple<address, integer>> = Calls {
+  contract: delayedWETH,
+  signature: "function withdraw(address,uint256)"
+};
+
+// Correlate claims from the disputeGame with the corresponding withdrawals and amounts from DelayedWETH
+source claimsAndWithdrawals: list<tuple<address, integer>> = [
+  tuple(withdrawal[0], withdrawal[1])
+  for withdrawal in withdrawals
+  if Contains { sequence: claimRecipients, item: withdrawal[0] }
+];
+
+// Get the expected delay period between an unlock and withdrawal from DelayedWETH (using seconds)
+source delayTime: integer = Call {
+  contract: delayedWETH,
+  signature: "function delay() returns (uint256)"
+};
+
+// Retrieve all the unlock calls from DelayedWETH
+// Retrieve all the unlock calls from DelayedWETH within a block window (~11 days)
+source unlocks: list<tuple<integer, address, tuple<address, integer>>> = HistoricalCalls {
+  contract: delayedWETH,
+  signature: "function unlock(address _guy, uint256 _wad)",
+  withBlocks: true,
+  withSender: true,
+  blockWindow: 26000 // approx. 3.61 days it takes 3.5 days for claiming credit after unlocked
+};
+
+// Parse out only the unlock calls that originated from the current disputeGame
+source disputeGameUnlocks: list<tuple<integer, address, integer>> = [
+  tuple(unlock[0], unlock[2][0], unlock[2][1])
+  for unlock in unlocks
+  if unlock[1] == disputeGame
+];
+
+// **Retrieve timestamps for unlock block numbers using multicall3**
+// Use the multicall3 contract to get timestamps for each block number
+source unlockTimestamps: list<integer> = [
+  Call {
+    contract: multicall3,
+    signature: "getCurrentBlockTimestamp() public view returns (uint256)",
+    block: unlock[0]
+  }
+  for unlock in disputeGameUnlocks
+];
+
+// Create a mapping of recipients to their unlock timestamps and amounts
+source unlocksAndAmounts: map<address, tuple<list<integer>, list<integer>>> = {
+  recipient: tuple(
+    [unlockTimestamps[idx]
+      for idx in Range {
+        start: 0,
+        stop: Len { sequence: unlockTimestamps }
+      }
+      if disputeGameUnlocks[idx][1] == recipient
+    ],
+    [unlock[2]
+      for unlock in disputeGameUnlocks
+      if unlock[1] == recipient
+    ]
+  )
+  for recipient in Unique {
+    sequence: [unlock[1] for unlock in disputeGameUnlocks]
+  }
+};
+
+// Get the current block timestamp for the withdrawal event
+source currTimestamp: integer = Call {
+  contract: multicall3,
+  signature: "getCurrentBlockTimestamp() public view returns (uint256)"
+};
+
+// Compare withdrawal timestamp with the latest unlock timestamp
+// For each withdrawal, check:
+// 1. There is a correlating unlock for the withdrawal in the mapping
+// 2. The withdrawal amount is equal to the sum of the unlock amounts for the address
+// 3. The time of the withdrawal is greater than the unlock time + delayTime
+source invalidWithdrawals: list<boolean> = [
+  MapContains {
+    map: unlocksAndAmounts,
+    item: claimAndWithdrawal[0]
+  } ? (
+    claimAndWithdrawal[1] != Sum {
+      sequence: unlocksAndAmounts[claimAndWithdrawal[0]][1]
+    } or (
+      (currTimestamp - Max {
+        sequence: unlocksAndAmounts[claimAndWithdrawal[0]][0]
+      }) <= delayTime
+    )
+  ) : true
+  for claimAndWithdrawal in claimsAndWithdrawals
+];
+
+// Invariant that triggers an alert if ETH bond is withdrawn too early
+invariant {
+  description: "ETH bond withdrawn too early from DelayedWETH",
+  condition: hasVerified ? (!Contains { sequence: invalidWithdrawals, item: true }) : true
+};
