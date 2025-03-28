@@ -12,7 +12,7 @@ The `incorrect_bond_balance.gate` monitor ensures the **safety** and integrity o
 
 2. **Calculating Total Bond Value of all Claims in the Dispute Game**:
 
-  - Retrieves the bond values of all the claims in the `disputeGame` and sums them.
+   - Retrieves the bond values of all the claims in the `disputeGame` and sums them.
 
 3. **Calculating Total ETH Held by the Dispute Game**:
 
