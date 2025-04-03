@@ -9,14 +9,34 @@ source delayedWETH: address = Call {
     signature: "function weth() returns(address)"
 };
 
-// Get the credit due to the honest challenger from the dispute game
-source claimCredit: integer = Call {
+// Get the bond distribution mode of the dispute game (0=UNDECIDED, 1=NORMAL, 2=REFUND)
+source bondDistributionMode: integer = Call {
     contract: disputeGame,
-    signature: "function credit(address) returns (uint256)",
+    signature: "function bondDistributionMode() returns (uint8)"
+};
+
+// Check if the honest challenger has unlocked their credit in the dispute game
+source hasUnlockedCredit: boolean = Call {
+    contract: disputeGame,
+    signature: "function hasUnlockedCredit(address) returns (bool)",
     params: tuple(honestChallenger)
 };
 
-// Get the total credit amount set to be unlocked for the honest challenger from DelayedWETH
+// Get the normalModeCredit due to the honest challenger from the dispute game
+source claimCredit: integer = Call {
+    contract: disputeGame,
+    signature: "function normalModeCredit(address) returns (uint256)",
+    params: tuple(honestChallenger)
+};
+
+// Get the refundModeCredit due to the honest challenger from the dispute game
+source refundModeCredit: integer = Call {
+    contract: disputeGame,
+    signature: "function refundModeCredit(address) returns (uint256)",
+    params: tuple(honestChallenger)
+};
+
+// Get the total unlocked amount for the honest challenger from DelayedWETH
 source totalCredit: tuple<integer,integer> = Call {
     contract: delayedWETH,
     signature: "function withdrawals(address game, address recipient) returns (uint256 amount, uint256 timestamp)",
@@ -30,12 +50,21 @@ source ethBalanceDisputeGame: integer = Call {
     params: tuple(disputeGame)
 };
 
+// Determine which credit balance to check against based on the bond distribution mode
+source creditBalanceToCheck: integer = bondDistributionMode == 1 ? claimCredit : bondDistributionMode == 2 ? refundModeCredit : 0;
+
 invariant {
+    // Alert only if:
+    //   - The bond distribution mode is NORMAL (1) or REFUND (2)
+    // Then ensure:
+    //   - The honest challenger must have unlocked their credit
+    //   - The appropriate credit (normalModeCredit or refundModeCredit) is fully backed by totalCredit
+    //   - totalCredit is backed by DelayedWETH's ethBalance
+    //   - The honest challenger's totalCredit cannot be non-zero if their credit is zero
     description: "Deficit of ETH in DelayedWETH contract",
-    // Check to make sure that:
-    //   1) the credit to be claimed does not exceeded the amount that was unlocked previously
-    //   2) the amount that was unlocked previously does not exceed the total ETH balance of the dispute game
-    condition: (claimCredit <= totalCredit[0]) and (totalCredit[0] <= ethBalanceDisputeGame)
-    // Also check to make sure that totalCredit is NOT non-zero when claimCredit is zero, which indicates a desync
-                and !(claimCredit == 0 and totalCredit[0] != 0)
+    condition: bondDistributionMode == 0 ? true : // Skip if mode undecided
+        hasUnlockedCredit
+        and (creditBalanceToCheck <= totalCredit[0])
+        and (totalCredit[0] <= ethBalanceDisputeGame)
+        and !(creditBalanceToCheck == 0 and totalCredit[0] != 0)
 };
