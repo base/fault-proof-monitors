@@ -26,7 +26,11 @@ The `eth_withdrawn_early.gate` monitor ensures the **safety** and integrity of t
 
    - **Amount Verification**: Verifies that the amount withdrawn matches the total amount unlocked for the recipient, ensuring that participants cannot withdraw more than they are entitled to.
 
-5. **Triggering Alerts**:
+5. **Ensuring Credit Unlock Status**:
+
+   - **Credit Unlock Status**: Verifies that for each withdrawal recipient, their credit unlock status is `true` in the specified `disputeGame`.
+
+6. **Triggering Alerts**:
 
    - **Early Withdrawal Detection**: If a withdrawal occurs before the required delay period has elapsed, or if the withdrawn amount does not match the unlocked amount, the monitor raises an alert for immediate investigation.
 
