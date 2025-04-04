@@ -26,73 +26,21 @@ func TestCreditAndBondDiscrepancyWrongBondAmount(t *testing.T) {
 	// set the mock data that we will pass along with the Gate file and params to the validate request endpoint
 	mocks := map[string]any{
 		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
-		"resolveCalls": [][]interface{}{
-			{0, 111111},
-			{1, 111111},
+		"delayedWeth":      "0x0000000000000000000000000000000000000000", // doesn't matter
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
 		},
-		"delayedWeth": "0x0000000000000000000000000000000000000000", // doesn't matter
-		"unlocks": [][]interface{}{
+		"unlocks": [][]any{
 			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
-			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000001},
-		},
-		"claimData": [][]interface{}{
-			// wrong bond amount
-			{4294967295, "0x0000000000000000000000000000000000000000", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 9999, "0x00", 1, 123456},
-			// reward goes to the counter address vs. the claimant
-			{0, "0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001, "0x00", 2, 123456},
-		},
-	}
-
-	// call the validate request endpoint and parse the results
-	failed, exceptions, trace, err := HandleValidateRequest(data, params, mocks)
-	if err != nil {
-		t.Errorf("Error handling validate request for %s: %v", monitorSeventeenFile, err)
-	}
-
-	// check if the validate request threw any exceptions
-	if len(exceptions) > 0 {
-		fmt.Println(trace)
-		t.Errorf("Exceptions for %s: %v", monitorSeventeenFile, exceptions)
-	}
-
-	// we expect to see the alert fired
-	if len(failed) == 0 {
-		fmt.Println(trace)
-		t.Errorf("Monitor did not fire an alert for %s when it was supposed to", monitorSeventeenFile)
-	}
-}
-
-func TestCreditAndBondDiscrepancyWrongCreditAmount(t *testing.T) {
-	// We expect an alert to be fired when the credit amount does not match the bond amount
-
-	// set the param
-	params := map[string]any{
-		"disputeGame": "0x0000000000000000000000000000000000000000",
-	}
-
-	// read in the gate file
-	data, err := ReadGateFile(monitorSeventeenFile)
-	if err != nil {
-		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
-	}
-
-	// set the mock data that we will pass along with the Gate file and params to the validate request endpoint
-	mocks := map[string]any{
-		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
-		"resolveCalls": [][]interface{}{
-			{0, 111111},
-			{1, 111111},
-		},
-		"delayedWeth": "0x0000000000000000000000000000000000000000", // doesn't matter
-		"unlocks": [][]interface{}{
-			// wrong credit amounts
-			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 9999},
 			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
 		},
-		"claimData": [][]interface{}{
-			{4294967295, "0x0000000000000000000000000000000000000000", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000, "0x00", 1, 123456},
-			// reward goes to the counter address vs. the claimant
-			{0, "0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001, "0x00", 2, 123456},
+		"withdraws":    [][]any{}, // no withdraw calls have been made
+		"withdrawList": []any{},   // no withdraw calls have been made
+		"winnersAndBonds": [][]any{
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 900000}, // does not match credit amount in unlocks
 		},
 	}
 
@@ -115,8 +63,8 @@ func TestCreditAndBondDiscrepancyWrongCreditAmount(t *testing.T) {
 	}
 }
 
-func TestCreditAndBondDiscrepancyWrongClaimantAddress(t *testing.T) {
-	// We expect an alert to be fired when the claimant address does not match the credited address
+func TestCreditAndBondDiscrepancyMissingUnlock(t *testing.T) {
+	// We expect an alert to be fired when there is a claimCredit call with no matchingunlock
 
 	// set the param
 	params := map[string]any{
@@ -129,24 +77,123 @@ func TestCreditAndBondDiscrepancyWrongClaimantAddress(t *testing.T) {
 		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
 	}
 
-	// set the mock data that we will pass along with the Gate file and params to the validate request endpoint
+	// set the mock data
 	mocks := map[string]any{
 		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
-		"resolveCalls": [][]interface{}{
-			{0, 111111},
-			{1, 111111},
+		"delayedWeth":      "0x0000000000000000000000000000000000000000",
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
 		},
-		"delayedWeth": "0x0000000000000000000000000000000000000000", // doesn't matter
-		"unlocks": [][]interface{}{
-			// right credit amounts, wrong claimant address
+		"unlocks": [][]any{
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000}, // no unlock for the second address
+		},
+		"withdraws":    [][]any{}, // no withdraw calls have been made
+		"withdrawList": []any{},   // no withdraw calls have been made
+		"winnersAndBonds": [][]any{
 			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
-			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
 		},
-		"claimData": [][]interface{}{
-			{4294967295, "0x0000000000000000000000000000000000000000", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000, "0x00", 1, 123456},
-			// reward goes to the counter address vs. the claimant
-			{0, "0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001, "0x00", 2, 123456},
+	}
+
+	// call the validate request endpoint and parse the results
+	failed, exceptions, trace, err := HandleValidateRequest(data, params, mocks)
+	if err != nil {
+		t.Errorf("Error handling validate request for %s: %v", monitorSeventeenFile, err)
+	}
+
+	// check if the validate request threw any exceptions
+	if len(exceptions) > 0 {
+		fmt.Println(trace)
+		t.Errorf("Exceptions for %s: %v", monitorSeventeenFile, exceptions)
+	}
+
+	// we expect to see the alert fired
+	if len(failed) == 0 {
+		fmt.Println(trace)
+		t.Errorf("Monitor did not fire an alert for %s when it was supposed to", monitorSeventeenFile)
+	}
+}
+
+func TestCreditAndBondDiscrepancyMissingWithdraw(t *testing.T) {
+	// We expect an alert to be fired when there is a claimCredit call with no matching withdraw
+
+	// set the param
+	params := map[string]any{
+		"disputeGame": "0x0000000000000000000000000000000000000000",
+	}
+
+	// read in the gate file
+	data, err := ReadGateFile(monitorSeventeenFile)
+	if err != nil {
+		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
+	}
+
+	// set the mock data
+	mocks := map[string]any{
+		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
+		"delayedWeth":      "0x0000000000000000000000000000000000000000",
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
 		},
+		"unlocks": [][]any{}, // no unlocks are present
+		"withdraws": [][]any{
+			// one withdrawal is missing
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
+		},
+		"winnersAndBonds": [][]any{},
+		"foundUnlocks":    []bool{},
+	}
+
+	// call the validate request endpoint and parse the results
+	failed, exceptions, trace, err := HandleValidateRequest(data, params, mocks)
+	if err != nil {
+		t.Errorf("Error handling validate request for %s: %v", monitorSeventeenFile, err)
+	}
+
+	// check if the validate request threw any exceptions
+	if len(exceptions) > 0 {
+		fmt.Println(trace)
+		t.Errorf("Exceptions for %s: %v", monitorSeventeenFile, exceptions)
+	}
+
+	// we expect to see the alert fired
+	if len(failed) == 0 {
+		fmt.Println(trace)
+		t.Errorf("Monitor did not fire an alert for %s when it was supposed to", monitorSeventeenFile)
+	}
+}
+
+func TestCreditAndBondDiscrepancyMissingWithdrawAndUnlock(t *testing.T) {
+	// We expect an alert to be fired when there is a claimCredit call with no matching withdraw and unlock
+
+	// set the param
+	params := map[string]any{
+		"disputeGame": "0x0000000000000000000000000000000000000000",
+	}
+
+	// read in the gate file
+	data, err := ReadGateFile(monitorSeventeenFile)
+	if err != nil {
+		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
+	}
+
+	// set the mock data
+	mocks := map[string]any{
+		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
+		"delayedWeth":      "0x0000000000000000000000000000000000000000",
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
+		},
+		"unlocks":         [][]any{}, // no unlock calls have been made
+		"withdraws":       [][]any{}, // no withdraw calls have been made
+		"withdrawList":    []any{},
+		"winnersAndBonds": [][]any{},
 	}
 
 	// call the validate request endpoint and parse the results
@@ -183,23 +230,26 @@ func TestCreditAndBondDiscrepancyCorrectAmountsAndAddresses(t *testing.T) {
 		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
 	}
 
-	// set the mock data that we will pass along with the Gate file and params to the validate request endpoint
+	// set the mock data
 	mocks := map[string]any{
 		"addressesInTrace": []any{"0x000000000000000000000000000000000000000"},
-		"resolveCalls": [][]interface{}{
-			{0, 111111},
-			{1, 111111},
+		"delayedWeth":      "0x0000000000000000000000000000000000000000",
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
 		},
-		"delayedWeth": "0x0000000000000000000000000000000000000000", // doesn't matter
-		"unlocks": [][]interface{}{
-			// right credit amounts, right claimant addresses
+		"unlocks": [][]any{
 			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
-			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000001},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
 		},
-		"claimData": [][]interface{}{
-			{4294967295, "0x0000000000000000000000000000000000000000", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000, "0x00", 1, 123456},
-			// reward goes to the counter address vs. the claimant
-			{0, "0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001, "0x00", 2, 123456},
+		"withdraws": [][]any{
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
+		},
+		"winnersAndBonds": [][]any{
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
 		},
 	}
 
@@ -236,22 +286,22 @@ func TestCreditAndBondDiscrepancyNoFilterAddress(t *testing.T) {
 		t.Errorf("Error reading file %s: %v", monitorSeventeenFile, err)
 	}
 
-	// set the mock data that we will pass along with the Gate file and params to the validate request endpoint
+	// set the mock data
 	mocks := map[string]any{
-		"resolveCalls": [][]interface{}{
-			{0, 111111},
-			{1, 111111},
+		"delayedWeth": "0x0000000000000000000000000000000000000000",
+		"creditCalls": [][]any{
+			// two addresses are claiming credit
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9"},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4"},
 		},
-		"delayedWeth": "0x0000000000000000000000000000000000000000", // doesn't matter
-		"unlocks": [][]interface{}{
+		"unlocks": [][]any{
 			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
-			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000001},
 		},
-		"claimData": [][]interface{}{
-			// wrong bond amount
-			{4294967295, "0x0000000000000000000000000000000000000000", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 9999, "0x00", 1, 123456},
-			// reward goes to the counter address vs. the claimant
-			{0, "0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", "0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000001, "0x00", 2, 123456},
+		"withdraws":    [][]any{},
+		"withdrawList": []any{},
+		"winnersAndBonds": [][]any{
+			{"0x49277EE36A024120Ee218127354c4a3591dc90A9", 1000000},
+			{"0xc96775081bcA132B0E7cbECDd0B58d9Ec07Fdaa4", 1000000},
 		},
 	}
 
