@@ -1,4 +1,4 @@
-use Call, Contains, Calls, Events, Len, FilterAddressesInTrace from hexagate;
+use Call, Contains, Calls, Len, FilterAddressesInTrace from hexagate;
 param disputeGame: address;
 
 // Filter to only run this invariant if the disputeGame address is in the trace
@@ -6,10 +6,10 @@ source addressesInTrace: list<address> = FilterAddressesInTrace {
     addresses: list(disputeGame)
 };
 
-// Retrieve the resolveClaim calls on the dispute game contract for the current block
-source resolveCalls: list<tuple<integer, integer>> = Calls {
+// Retrieve the claimCredit calls on the dispute game contract for the current block
+source creditCalls: list<tuple<address>> = Calls {
     contract: disputeGame,
-    signature: "function resolveClaim(uint256 _claimIndex, uint256 _numToResolve)"
+    signature: "function claimCredit(address _recipient)"
 };
 
 // Get the DelayedWETH contract address from the dispute game contract
@@ -18,32 +18,40 @@ source delayedWeth: address = Call {
     signature: "function weth() returns (address)"
 };
 
-source zeroAddress: address = 0x0000000000000000000000000000000000000000;
-
 // Retrieve the unlock calls on the DelayedWETH contract for the current block
 source unlocks: list<tuple<address, integer>> = Calls {
     contract: delayedWeth,
     signature: "function unlock(address _guy, uint256 _wad)"
 };
 
-// Given the list of claim indices in resolveCalls, use the indices to retreive the claim data
-source claimData: list<
-  tuple<integer,address,address,integer,bytes,integer,integer>
-> = [
-    Call {
-        contract: disputeGame,
-        signature: "function claimData(uint256 idx) returns (uint32,address,address,uint128,bytes32,uint128,uint128)",
-        params: tuple(call[0])
-    }
-    for call in resolveCalls
+// Retrieve the withdraw calls on the DelayedWETH contract for the current block
+source withdraws: list<tuple<address, integer>> = Calls {
+    contract: delayedWeth,
+    signature: "function withdraw(address _guy, uint256 _wad)"
+};
+
+// Extract withdrawal recipients for comparison against claimCredit calls
+source withdrawList: list<address> = [
+    withdraw[0]
+    for withdraw in withdraws
 ];
 
-// From the claim data, we can derive the claimant (recipient) and the bond value they should receive
+source withdrawalsForRecipients: list<boolean> = [
+    Contains { sequence: withdrawList, item: creditCall[0] }
+    for creditCall in creditCalls
+];
+
+// Given the list of recipients from claimCredit, use them to fetch their expected credit amount
 source winnersAndBonds: list<tuple<address, integer>> = [
-    // If counteredBy is not address(0) then the recipient is the counterer, otherwise it will be the claimant
-    // Also store the bond amount (claim[3]) that the recipient should receive
-    tuple(claim[1] != zeroAddress ? claim[1] : claim[2], claim[3])
-    for claim in claimData
+    tuple(
+        creditCall[0],
+        Call {
+            contract: disputeGame,
+            signature: "function credit(address recipient) view returns (uint256)",
+            params: tuple(creditCall[0])
+        }
+    )
+    for creditCall in creditCalls
 ];
 
 // The unlocks array is [[address, bond], ...] and so is winnersAndBonds
@@ -55,9 +63,24 @@ source foundUnlocks: list<boolean> = [
 ];
 
 invariant {
-    description: "Could not find matching unlock",
-    condition: (Len { sequence: addressesInTrace } > 0) ? (!Contains {
+    description: "Credit discrepancy: could not find matching unlock for claimCredit call",
+    condition: (Len { sequence: addressesInTrace } > 0) and (Len { sequence: unlocks } > 0) ? (!Contains {
         sequence: foundUnlocks,
         item: false
     }) : true
+};
+
+invariant {
+    description: "Withdrawal discrepancy: could not find matching withdraw for claimCredit call",
+    condition: (Len { sequence: addressesInTrace } > 0) and (Len { sequence: withdraws } > 0) ? (!Contains {
+        sequence: withdrawalsForRecipients,
+        item: false
+    }) : true
+};
+
+invariant {
+    description: "Credit and Bond discrepancy: could not find withdraws or unlocks for claimCredit call",
+    condition: (Len { sequence: addressesInTrace } > 0) and (Len {sequence: creditCalls} > 0)
+        ? (Len { sequence: withdraws } > 0 or Len { sequence: unlocks } > 0)
+        : true
 };

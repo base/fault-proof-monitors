@@ -3,6 +3,7 @@ use Call, Calls, Contains, HistoricalCalls, MapContains, Max, Sum, Unique, Len, 
 // Add the multicall3 contract address for retrieving block timestamps
 param multicall3: address;
 
+// Dispute game contract address
 param disputeGame: address;
 
 // Filter to only run this invariant if the disputeGame address is in the trace
@@ -21,6 +22,7 @@ source claims: list<tuple<address>> = Calls {
     contract: disputeGame,
     signature: "function claimCredit(address _recipient)"
 };
+
 source withdrawals: list<tuple<address, integer>> = Calls {
     contract: delayedWETH,
     signature: "function withdraw(address _guy, uint256 _wad)"
@@ -33,17 +35,16 @@ source claimsAndWithdrawals: list<tuple<address, integer>> = [
     if Contains {
         sequence: claims,
         item: tuple(withdrawal[0])
-      }
+    }
 ];
 
-// Get the expected delay period between an unlock and withdrawal from DelayedWETH (using seconds)
+// Get the expected delay period between an unlock and withdrawal from DelayedWETH (in seconds)
 source delayTime: integer = Call {
     contract: delayedWETH,
     signature: "function delay() returns (uint256)"
 };
 
-// **Retrieve unlock calls and get block numbers**
-// Retrieve all the unlock calls from DelayedWETH
+// Retrieve unlock calls from DelayedWETH
 source unlocks: list<tuple<integer, address, tuple<address, integer>>> = HistoricalCalls {
     contract: delayedWETH,
     signature: "function unlock(address _guy, uint256 _wad)",
@@ -51,20 +52,19 @@ source unlocks: list<tuple<integer, address, tuple<address, integer>>> = Histori
     withSender: true
 };
 
-// Parse out only the unlock calls that originated from the current disputeGame
+// Parse only the unlock calls originated from the current disputeGame
 source disputeGameUnlocks: list<tuple<integer, address, integer>> = [
     tuple(unlock[0], unlock[2][0], unlock[2][1])
     for unlock in unlocks
     if unlock[1] == disputeGame
 ];
 
-// **Retrieve timestamps for unlock block numbers using multicall3**
-// Use the multicall3 contract to get timestamps for each block number
+// Retrieve timestamps for unlock block numbers
 source unlockTimestamps: list<integer> = [
     Call {
         contract: multicall3,
         signature: "getCurrentBlockTimestamp() public view returns (uint256)",
-        block: unlock[0] // Pass the block number to multicall3
+        block: unlock[0]
     }
     for unlock in disputeGameUnlocks
 ];
@@ -84,7 +84,17 @@ source unlocksAndAmounts: map<address, tuple<list<integer>, list<integer>>> = {
     for recipient in Unique { sequence: [unlock[1] for unlock in disputeGameUnlocks] }
 };
 
-// Get the current block timestamp for the withdrawal event
+// Retrieve hasUnlockedCredit status for each withdrawal recipient
+source hasUnlockedCredit: list<boolean> = [
+    Call {
+        contract: disputeGame,
+        signature: "function hasUnlockedCredit(address) view returns (bool)",
+        params: tuple(recipient)
+    }
+    for recipient in Unique { sequence: [cw[0] for cw in claimsAndWithdrawals] }
+];
+
+// Get the current block timestamp for validation
 source currTimestamp: integer = Call {
     contract: multicall3,
     signature: "getCurrentBlockTimestamp() public view returns (uint256)"
@@ -113,5 +123,13 @@ invariant {
   description: "ETH bond withdrawn too early from DelayedWETH",
   condition: (Len {sequence: addressesInTrace} > 0) ?
     (!Contains {sequence: invalidWithdrawals, item: true})
+    : true
+};
+
+// Invariant that triggers an alert if a withdrawal recipient has not unlocked their credit
+invariant {
+  description: "Withdrawal recipient has not unlocked their credit",
+  condition: (Len {sequence: addressesInTrace} > 0) ?
+    (!Contains {sequence: hasUnlockedCredit, item: false})
     : true
 };

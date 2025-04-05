@@ -10,7 +10,13 @@ The `eth_deficit.gate` monitor ensures the **safety** and integrity of the fault
 
    - **DelayedWETH Address**: Retrieves the `DelayedWETH` contract address associated with the specific `disputeGame`.
 
-   - **Challenger's Claim Credit (`claimCredit`)**: The amount of ETH that the Challenger (`honestChallenger`) can currently claim from the `disputeGame`.
+   - **Challenger's Normal Mode Credit (`claimCredit`)**: The amount of ETH that the Challenger (`honestChallenger`) can currently claim based on the resolution of the `disputeGame`.
+
+   - **Challenger's Refund Mode Credit (`refundModeCredit`)**: The amount of ETH that the Challenger can claim based on the moves made during the `disputeGame`.
+
+   - **Bond Distribution Mode (`bondDistributionMode`)**: Determines the credit amounts participants will receive from the `disputeGame`.
+
+   - **Challenger's Unlocked Credit Status (`hasUnlockedCredit`)**: Determines whether the Challenger has successfully unlocked their credit, which is a requirement before it can be withdrawn.
 
    - **Challenger's Total Credit (`totalCredit`)**: The total amount of ETH that has been unlocked for the `honestChallenger` in the `DelayedWETH` contract.
 
@@ -18,8 +24,11 @@ The `eth_deficit.gate` monitor ensures the **safety** and integrity of the fault
 
 2. **Validating Balances**:
 
+   - **Credit Unlock Status**:
+     - Ensures that the challenger has unlocked their credit using the `hasUnlockedCredit` value.
+
    - **Credit Consistency**:
-     - Ensures that the `claimCredit` (what the challenger can claim) does not exceed the `totalCredit` (what has been unlocked for them).
+     - Ensures that the credit that the challenger can claim, based on the `bondDistributionMode`, does not exceed the `totalCredit` (what has been unlocked for them).
      - Verifies that the amount the challenger is trying to claim is consistent with what is available.
 
    - **Total Credit vs. Dispute Game Balance**:
@@ -27,7 +36,7 @@ The `eth_deficit.gate` monitor ensures the **safety** and integrity of the fault
      - Checks that the total credits unlocked for participants do not exceed the ETH actually held for the dispute game.
 
    - **Synchronization Check**:
-     - Ensures that if `claimCredit` is zero, then `totalCredit` should also be zero.
+     - Ensures that if the credit the challenger can claim is zero, then `totalCredit` should also be zero.
      - Detects discrepancies that might indicate desynchronization between the dispute game and the `DelayedWETH` contract.
 
 3. **Triggering Alerts**:
