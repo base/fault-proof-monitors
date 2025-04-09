@@ -1,0 +1,81 @@
+use Call, Contains, Calls, Events, Len from hexagate;
+
+param disputeGameVerifier: address; // Verifier contract address
+param baseDisputeGameFactory: address; // Base Dispute Game Factory address
+
+source zeroAddress: address = 0x0000000000000000000000000000000000000000;
+
+// Retrieve all resolveClaim() calls across all contracts
+source allResolveCalls: list<tuple<address, tuple<integer, integer>>> = Calls {
+  signature: "function resolveClaim(uint256,uint256)",
+  withContract: true
+};
+
+// Filter resolveClaim calls to only those from verified dispute games
+source verifiedResolveCalls: list<tuple<address, tuple<integer, integer>>> = [
+  call
+  for call in allResolveCalls
+  if Call {
+    contract: disputeGameVerifier,
+    signature: "function isGameRegistered(address,address) view returns (bool)",
+    params: tuple(baseDisputeGameFactory, call[0])
+  } == true
+];
+
+source hasVerified: boolean = Len { sequence: verifiedResolveCalls } > 0;
+
+// Use the first verified dispute game from this block
+source disputeGame: address = hasVerified ? verifiedResolveCalls[0][0] : zeroAddress;
+
+// Extract the (claimIndex, numToResolve) tuples from resolveClaim calls
+source resolveCalls: list<tuple<integer, integer>> = [
+  call[1]
+  for call in verifiedResolveCalls
+];
+
+// Get the DelayedWETH contract address from the dispute game contract
+source delayedWeth: address = Call {
+  contract: disputeGame,
+  signature: "function weth() returns (address)"
+};
+
+// Retrieve the unlock calls on the DelayedWETH contract for the current block
+source unlocks: list<tuple<address, integer>> = Calls {
+  contract: delayedWeth,
+  signature: "function unlock(address _guy, uint256 _wad)"
+};
+
+// Given the list of claim indices in resolveCalls, use the indices to retrieve the claim data
+source claimData: list<tuple<integer,address,address,integer,bytes,integer,integer>> = [
+  Call {
+    contract: disputeGame,
+    signature: "function claimData(uint256) returns (uint32,address,address,uint128,bytes32,uint128,uint128)",
+    params: tuple(call[0])
+  }
+  for call in resolveCalls
+];
+
+// From the claim data, we can derive the claimant (recipient) and the bond value they should receive
+source winnersAndBonds: list<tuple<address, integer>> = [
+  // If counteredBy is not address(0) then the recipient is the counterer, otherwise it will be the claimant
+  // Also store the bond amount (claim[3]) that the recipient should receive
+  tuple(claim[1] != zeroAddress ? claim[1] : claim[2], claim[3])
+  for claim in claimData
+];
+
+// The unlocks array is [[address, bond], ...] and so is winnersAndBonds
+// Therefore, we can compare each item in winnersAndBonds to the unlocks list - where we should find an item
+// in the unlocks list with the exact same bond value
+source foundUnlocks: list<boolean> = [
+  Contains { sequence: unlocks, item: winnerAndBond }
+  for winnerAndBond in winnersAndBonds
+];
+
+// Trigger an alert if any bond expected to be unlocked is not found in actual unlocks
+invariant {
+  description: "Could not find matching unlock",
+  condition: hasVerified ? (!Contains {
+    sequence: foundUnlocks,
+    item: false
+  }) : true
+};

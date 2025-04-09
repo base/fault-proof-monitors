@@ -1,0 +1,108 @@
+use Call, Events, HistoricalEvents, Contains, Len, Range from hexagate;
+
+param disputeGameVerifier: address; // Verifier contract address
+param baseDisputeGameFactory: address; // DisputeGameFactory address
+param honestChallenger: address; // Challenger to monitor
+
+source zeroAddr: address = 0x0000000000000000000000000000000000000000;
+
+// Retrieve all Resolved events emitted by dispute games in the block
+source resolveEventsAll: list<tuple<address, tuple<integer>>> = Events {
+  signature: "event Resolved(uint8 indexed status)",
+  withContract: true
+};
+
+// Filter to only registered dispute games
+source verifiedResolveEvents: list<tuple<address, tuple<integer>>> = [
+  event
+  for event in resolveEventsAll
+  if Call {
+    contract: disputeGameVerifier,
+    signature: "function isGameRegistered(address,address) view returns (bool)",
+    params: tuple(baseDisputeGameFactory, event[0])
+  } == true
+];
+
+source hasVerified: boolean = Len { sequence: verifiedResolveEvents } > 0;
+source disputeGame: address = hasVerified ? verifiedResolveEvents[0][0] : zeroAddr;
+source resolveStatus: integer = hasVerified ? verifiedResolveEvents[0][1][0] : 0;
+
+// Source to retrieve historical `Move` events from the specified dispute game contract
+source historicalMoveEvents: list<tuple<integer, bytes, address>> = HistoricalEvents {
+  contract: disputeGame,
+  signature: "event Move(uint256 indexed parentIndex, bytes32 indexed claim, address indexed claimant)"
+};
+
+// Retrieve the number of claims
+source claimCount: integer = Call {
+  contract: disputeGame,
+  signature: "function claimDataLen() view returns (uint256)"
+};
+
+// Create a list of even parent indices (indicating challenge moves)
+source evenParentIndices: list<integer> = Range {
+  start: 0,
+  stop: claimCount,
+  step: 2
+};
+
+// Create a list of odd parent indices (indicating defense moves)
+source oddParentIndices: list<integer> = Range {
+  start: 1,
+  stop: claimCount,
+  step: 2
+};
+
+// Filter the historical events where the claimant is honestChallenger and the parentIndex is even (challenge move)
+source challengeMoves: list<tuple<integer, bytes, address>> = [
+  event
+  for event in historicalMoveEvents
+  if (event[2] == honestChallenger) and Contains { sequence: evenParentIndices, item: event[0] }
+];
+
+// Filter the historical events where the claimant is honestChallenger and the parentIndex is odd (defense move)
+source defenseMoves: list<tuple<integer, bytes, address>> = [
+  event
+  for event in historicalMoveEvents
+  if (event[2] == honestChallenger) and Contains { sequence: oddParentIndices, item: event[0] }
+];
+
+// Check if the challenger lost as a challenger
+source challengerLost: boolean = (resolveStatus == 2) and (Len { sequence: challengeMoves } > 0);
+
+// Check if the challenger lost as a defender
+source defenderLost: boolean = (resolveStatus == 1) and (Len { sequence: defenseMoves } > 0);
+
+// Check if the challenger lost any subgames as well
+source claimResults: list<tuple<integer,address,address,integer,bytes,integer,integer>> = [
+  Call {
+    contract: disputeGame,
+    signature: "function claimData(uint256) returns (uint32,address,address,uint128,bytes32,uint128,uint128)",
+    params: tuple(claimIdx)
+  }
+  for claimIdx in Range {start: 0, stop: claimCount, step: 1}
+];
+
+source lostSubgames: list<boolean> = [
+  subgame[1] != zeroAddr ? true : false
+  for subgame in claimResults
+  if (subgame[2] == honestChallenger)
+];
+
+// Invariant to trigger an alert if the challenger lost as a challenger
+invariant {
+  description: "Challenger lost the dispute game while challenging a state root",
+  condition: hasVerified ? !challengerLost : true
+};
+
+// Invariant to trigger an alert if the challenger lost as a defender
+invariant {
+  description: "Challenger lost the dispute game while defending a state root",
+  condition: hasVerified ? !defenderLost : true
+};
+
+// Invariant to trigger an alert if Challenger lost any subgames
+invariant {
+  description: "Challenger lost one or more subgames",
+  condition: hasVerified ? (!Contains { sequence: lostSubgames, item: true }) : true
+};

@@ -1,0 +1,78 @@
+use Call, Events, Contains, Range, Len from hexagate;
+
+param disputeGameVerifier: address; // Verifier contract address
+param baseDisputeGameFactory: address; // Base Dispute Game Factory address
+param cbProposer: address; // Expected proposer of the root claim
+param cbChallenger: address; // Challenger to monitor
+
+// Retrieve `Move` events emitted from all dispute games in the current block
+// `withContract: true` gives us the address of the dispute game emitting the event
+source moveEvents: list<tuple<address, tuple<integer, bytes, address>>> = Events {
+  signature: "event Move(uint256 indexed parentIndex, bytes32 indexed claim, address indexed claimant)",
+  withContract: true
+};
+
+// Dynamically verify if dispute games are registered using the DisputeGameVerifier
+// This allows the monitor to support new dispute games without needing to update the monitor each time
+source verifiedMoveEvents: list<tuple<address, tuple<integer, bytes, address>>> = [
+  event
+  for event in moveEvents
+  if Call {
+    contract: disputeGameVerifier,
+    signature: "function isGameRegistered(address _factory, address _game) view returns (bool)",
+    params: tuple(baseDisputeGameFactory, event[0])
+  } == true
+];
+
+// Proceed only if there is at least one verified dispute game
+source hasVerifiedEvents: boolean = Len { sequence: verifiedMoveEvents } > 0;
+
+// Dynamically pick the first verified dispute game for subsequent calls
+source disputeGame: address = hasVerifiedEvents ? verifiedMoveEvents[0][0] : 0x0000000000000000000000000000000000000000;
+
+// Retrieve the number of claims in the verified dispute game
+source claimCount: integer = hasVerifiedEvents ? Call {
+  contract: disputeGame,
+  signature: "function claimDataLen() view returns (uint256)"
+} : 0;
+
+// Retrieve the claim data for each claim index
+source claimData: list<tuple<integer,address,address,integer,bytes,integer,integer>> = [
+  Call {
+    contract: disputeGame,
+    signature: "function claimData(uint256 idx) view returns (uint32,address,address,uint128,bytes32,uint128,uint128)",
+    params: tuple(index)
+  }
+  for index in Range { start: 0, stop: claimCount }
+];
+
+// Parse out the root claim proposer address - the root claim is the claim at position 0 in the claimData list
+source rootClaimProposer: address = hasVerifiedEvents ? claimData[0][2] : 0x0000000000000000000000000000000000000000;
+
+// Make a list of event numbers, which are the subgame depths that correspond to defense claims
+// All attacks that are ultimately challenges to the root claim will have a parentIndex that is even
+source attackClaimParentIndices: list<integer> = Range {
+  start: 0,
+  stop: claimCount,
+  step: 2
+};
+
+// Check the rest of the claims for the following conditions:
+//   1) Is the proposer of the claim CB Challenger
+//   2) Is the claim attacking the root claim - we can determine if an "attack" against the root claim is happening
+//      by checking the parentIndex of the claim. If the parentIndex is 0 or an even number, then the claim is an
+//      attack ultimately against the root claim, no matter the depth.
+source challengerAttacks: list<boolean> = [
+  (claim[2] == cbChallenger) and Contains {
+    sequence: attackClaimParentIndices,
+    item: claim[0]
+  }
+  for claim in claimData
+  if (rootClaimProposer == cbProposer)
+];
+
+// Trigger an alert when an attack by the CB challenger on a state output root proposed by the CB proposer is detected
+invariant {
+  description: "CB challenger attacked a state output root proposed by CB proposer",
+  condition: hasVerifiedEvents ? !Contains { sequence: challengerAttacks, item: true } : true
+};
