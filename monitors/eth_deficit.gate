@@ -63,7 +63,7 @@ invariant {
     //   - The honest challenger's totalCredit cannot be non-zero if their credit is zero
     description: "Deficit of ETH in DelayedWETH contract",
     condition: bondDistributionMode == 0 ? true : // Skip if mode undecided
-        hasUnlockedCredit
+        (hasUnlockedCredit or creditBalanceToCheck == 0)
         and (creditBalanceToCheck <= totalCredit[0])
         and (totalCredit[0] <= ethBalanceDisputeGame)
         and !(creditBalanceToCheck == 0 and totalCredit[0] != 0)
